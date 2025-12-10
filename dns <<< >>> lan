@@ -1,0 +1,43 @@
+I'm having issues on well on Xubuntu 22 in combination with zerons.
+
+When using dig the IP address of bobby.myztnework.com is correctly returned by the zerons server:
+
+>> dig +short @10.147.20.10 bobby.myztnework.com
+ 10.147.20.202
+
+However, when performing a ping
+
+
+ping: bobby.myztnetwork.com: Name or service not known
+
+Edit. Okay, got things working. laduke's comment guided the fix on my computer.
+
+>>  sudo networkctl reload
+WARNING: systemd-networkd is not running, output will be incomplete.
+
+So, looks like systemd-networkd isn't working. Checking system status to confirm:
+
+sudo  systemctl status systemd-networkd
+○ systemd-networkd.service - Network Configuration
+     Loaded: loaded (/lib/systemd/system/systemd-networkd.service; disabled; vendor preset: enabled)
+     Active: inactive (dead)
+TriggeredBy: ○ systemd-networkd.socket
+       Docs: man:systemd-networkd.service(8)
+
+Let's try starting it to see what happens:
+
+sudo systemctl start systemd-networkd
+sudo systemctl enable systemd-networkd
+
+Now trying laduke's comments again
+
+sudo networkctl reload
+sudo networkctl reconfigure ztkseqpe62
+
+No issues reported this time. Onto ping test:
+
+PING bobby.myztnetwork.com (10.147.20.202) 56(84) bytes of data.
+64 bytes from bobby.myztnetwork.com (10.147.20.202): icmp_seq=1 ttl=64 time=82.4 ms
+64 bytes from bobby.myztnetwork.com (10.147.20.202): icmp_seq=2 ttl=64 time=31.8 ms
+
+Problem solved! (at least on my end)
