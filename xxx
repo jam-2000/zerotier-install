@@ -92,3 +92,6 @@ sudo iptables -t nat -L POSTROUTING -v -n
 
 echo -e "\n${GREEN}--- Script Complete ---${NC}"
 echo "Your Ubuntu machine is now configured as a router for the ZeroTier network."
+echo -e "\n${GREEN}--- Script Complete ---${NC}"
+echo
+echo
