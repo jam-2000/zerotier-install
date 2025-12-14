@@ -1,0 +1,17 @@
+ZeroTier on Proxmox in LXC
+FIX for /dev/net/tun
+
+# In Proxmox Shell:
+nano /etc/pve/lxc/<<<ID>>>.conf
+lxc.cgroup.devices.allow: c 10:200 rwm
+lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file 0 0
+
+# Inside the LXC container's terminal
+sudo sysctl -w net.ipv4.ip_forward=1
+# To make it permanent (edit /etc/sysctl.conf and uncomment/add):
+# net.ipv4.ip_forward = 1
+
+# Enable iptables MASQUERADE
+sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+sudo iptables -A FORWARD -i <<<ZT-INTERFACE>>> -o eth0 -j ACCEPT
+sudo iptables -A FORWARD -i eth0 -o <<<ZT-INTERFACE>>> -m state --state RELATED,ESTABLISHED -j ACCEPT
