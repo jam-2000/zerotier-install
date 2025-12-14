@@ -1,0 +1,94 @@
+#!/bin/bash
+
+# --- ANSI Color Definitions ---
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# --- CONFIGURATION START ---
+# The public-facing (internet) interface, typically 'eth0' or 'enpXsY'
+PUBLIC_INTERFACE="eth0"
+# --- CONFIGURATION END ---
+
+echo -e "${CYAN}--- Starting ZeroTier Router Setup Script ---${NC}"
+
+# --- Automatic Interface Detection ---
+echo -e "${YELLOW}Searching for ZeroTier interface (starting with 'zt')...${NC}"
+ZT_INTERFACE=$(ip -o link show | awk '/zt/{print $2}' | sed 's/://' | head -n 1)
+
+if [ -z "$ZT_INTERFACE" ]; then
+    echo -e "\n${RED}!!! ERROR !!!${NC}"
+    echo -e "${RED}Could not find an active ZeroTier interface.${NC}"
+    echo -e "${RED}Please ensure ZeroTier is running and connected.${NC}"
+    echo -e "${RED}Script aborted.${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✅ Auto-Detected ZeroTier Interface: ${ZT_INTERFACE}${NC}"
+echo -e "${CYAN}Using Public Interface: ${PUBLIC_INTERFACE}${NC}"
+echo -e "----------------------------------------------"
+
+# 1. Enable IP Forwarding
+echo -e "\n${CYAN}1. Enabling IP forwarding in /etc/sysctl.conf...${NC}"
+LINE_TO_ADD="net.ipv4.ip_forward = 1"
+if grep -qF "$LINE_TO_ADD" /etc/sysctl.conf; then
+    echo -e "  -> ${YELLOW}net.ipv4.ip_forward is already set. Skipping addition.${NC}"
+else
+    # Add the line to the file
+    echo "$LINE_TO_ADD" | sudo tee -a /etc/sysctl.conf > /dev/null
+    echo -e "  -> ${GREEN}Line added.${NC}"
+fi
+
+# Apply the sysctl change immediately
+echo -e "  -> ${YELLOW}Applying sysctl changes...${NC}"
+sudo sysctl -p
+
+# 2. Install iptables-persistent
+echo -e "\n${CYAN}2. Installing iptables-persistent and netfilter-persistent...${NC}"
+if ! command -v netfilter-persistent &> /dev/null
+then
+    sudo apt update
+    sudo apt install -y iptables-persistent netfilter-persistent
+    echo -e "  -> ${GREEN}Installation complete.${NC}"
+else
+    echo -e "  -> ${YELLOW}iptables-persistent is already installed. Skipping installation.${NC}"
+fi
+
+# 3. Enable iptables MASQUERADE
+echo -e "\n${CYAN}3. Setting up iptables rules for NAT and forwarding...${NC}"
+
+# Clear any previous MASQUERADE rules for this configuration (to allow rerunning safely)
+echo -e "  -> ${YELLOW}Cleaning up any potential duplicate rules (non-critical output suppressed)...${NC}"
+sudo iptables -t nat -D POSTROUTING -o "${PUBLIC_INTERFACE}" -j MASQUERADE 2>/dev/null
+sudo iptables -D FORWARD -i "${ZT_INTERFACE}" -o "${PUBLIC_INTERFACE}" -j ACCEPT 2>/dev/null
+sudo iptables -D FORWARD -i "${PUBLIC_INTERFACE}" -o "${ZT_INTERFACE}" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null
+
+# Rule 1: MASQUERADE (NAT)
+sudo iptables -t nat -A POSTROUTING -o "${PUBLIC_INTERFACE}" -j MASQUERADE
+echo -e "  -> ${GREEN}MASQUERADE rule added to NAT POSTROUTING.${NC}"
+
+# Rule 2: Forwarding (ZT to Public)
+sudo iptables -A FORWARD -i "${ZT_INTERFACE}" -o "${PUBLIC_INTERFACE}" -j ACCEPT
+echo -e "  -> ${GREEN}FORWARD ACCEPT rule added (ZeroTier -> Public).${NC}"
+
+# Rule 3: Forwarding (Public to ZT - ESTABLISHED/RELATED)
+sudo iptables -A FORWARD -i "${PUBLIC_INTERFACE}" -o "${ZT_INTERFACE}" -m state --state RELATED,ESTABLISHED -j ACCEPT
+echo -e "  -> ${GREEN}FORWARD ACCEPT rule added (Public -> ZeroTier, for established connections).${NC}"
+
+# 4. Save IPv4 and IPv6 rules
+echo -e "\n${CYAN}4. Saving iptables rules to make them persistent across reboots...${NC}"
+sudo netfilter-persistent save
+echo -e "  -> ${GREEN}Rules saved successfully.${NC}"
+
+# 5. Show active iptables rules
+echo -e "\n${CYAN}5. Showing active iptables rules (FORWARD and NAT POSTROUTING):${NC}"
+echo -e "${YELLOW}--- FORWARD CHAIN ---${NC}"
+sudo iptables -L FORWARD -v -n
+echo ""
+echo -e "${YELLOW}--- NAT POSTROUTING CHAIN ---${NC}"
+sudo iptables -t nat -L POSTROUTING -v -n
+
+echo -e "\n${GREEN}--- Script Complete ---${NC}"
+echo "Your Ubuntu machine is now configured as a router for the ZeroTier network."
