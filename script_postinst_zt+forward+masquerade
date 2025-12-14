@@ -1,5 +1,15 @@
 #!/bin/bash
 
+# FIRST STEPs:
+# install zerotier-cli
+# join ZeroTier Controller to its own ZeroTier Network 
+# authorize it in its own ZeroTier Network
+
+######################################################
+# Now this ZeroTier Controller will be configured    #
+# to act as the Gateway for its own ZeroTier Network #
+######################################################
+
 # --- CONFIGURATION START ---
 # The public-facing (internet) interface, typically 'eth0' or 'enpXsY'
 PUBLIC_INTERFACE="eth0"
