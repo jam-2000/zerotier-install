@@ -14,7 +14,7 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color (Resets text color to default)
 
 # --- Configuration Variables ---
-ZT_IP="10.11.12.111"       # The ZeroTier IP of this VM
+ZT_IP="10.11.12.1"       # The ZeroTier IP of this VM
 UPSTREAM_DNS="192.168.88.1" # The IP address to forward all DNS requests to
 ZT_NETWORK_ID="<YOUR_ZEROTIER_NETWORK_ID>" # Replace with your ZeroTier Network ID
 # -------------------------------
