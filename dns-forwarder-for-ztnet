@@ -1,82 +1,89 @@
 #!/bin/bash
-# Script to install and configure dnsmasq as a DNS forwarder
-# It automatically finds the local ZeroTier IP for the 10.11.12.0/24 subnet.
+
+# --- 1. Define Color Variables (ANSI Escape Codes) ---
+
+# Standard Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+
+# Formatting/Reset
+BOLD='\033[1m'
+NC='\033[0m' # No Color (Resets text color to default)
 
 # --- Configuration Variables ---
-ZEROTIER_NETWORK_SUBNET="10.11.12.0/24"
-UPSTREAM_DNS="192.168.88.1"
-DNSMASQ_CONFIG="/etc/dnsmasq.d/zerotier_dns.conf"
+ZT_IP="10.11.12.111"       # The ZeroTier IP of this VM
+UPSTREAM_DNS="192.168.88.1" # The IP address to forward all DNS requests to
+ZT_NETWORK_ID="<YOUR_ZEROTIER_NETWORK_ID>" # Replace with your ZeroTier Network ID
+# -------------------------------
 
-echo "--- Starting Dynamic DNS Forwarder Setup ---"
+echo -e "${CYAN}${BOLD}Starting Dnsmasq DNS Forwarder setup...${NC}"
 
-# --- 1. Find the Local ZeroTier IP ---
-echo "1. Attempting to find local ZeroTier IP for subnet: ${ZEROTIER_NETWORK_SUBNET}"
-
-# Command to get the ZeroTier IP:
-# 1. zerotier-cli listnetworks: Lists connected networks and managed IPs.
-# 2. grep: Filters for the managed IP line corresponding to the target subnet (10.11.12.).
-# 3. cut/awk: Extracts the IP address, excluding the subnet mask (/24).
-ZEROTIER_IP=$(sudo zerotier-cli listnetworks | grep -oE "([0-9]{1,3}\.){3}[0-9]{1,3}/${ZEROTIER_NETWORK_SUBNET//\//}" | cut -d '/' -f 1 | head -n 1)
-
-if [ -z "${ZEROTIER_IP}" ]; then
-    echo "ERROR: Could not find the ZeroTier IP address in the ${ZEROTIER_NETWORK_SUBNET} subnet."
-    echo "Please ensure ZeroTier is installed, running, and successfully connected/authorized on the network."
-    exit 1
-fi
-
-echo "SUCCESS: Found local ZeroTier IP: ${ZEROTIER_IP}"
-echo "------------------------------------------------------"
-
-# --- 2. Install dnsmasq ---
-echo "2. Updating package list and installing dnsmasq..."
+# 2. Install Dnsmasq
+echo -e "${BLUE}1. Installing dnsmasq...${NC}"
 sudo apt update
 sudo apt install -y dnsmasq
 
-# Check if installation was successful
-if [ $? -ne 0 ]; then
-    echo "ERROR: dnsmasq installation failed. Exiting."
-    exit 1
-fi
-
-# --- 3. Configure dnsmasq ---
-# Backup original config
-if [ -f /etc/dnsmasq.conf ]; then
-    echo "3. Backing up original dnsmasq.conf..."
-    sudo cp /etc/dnsmasq.conf /etc/dnsmasq.conf.bak
-fi
-
-# Create the dedicated ZeroTier DNS configuration file
-echo "4. Creating dnsmasq configuration file: ${DNSMASQ_CONFIG}"
-sudo bash -c "cat > ${DNSMASQ_CONFIG} << EOL
-# ZeroTier DNS Forwarder Configuration
-# Listen only on the dynamically found ZeroTier IP address
-listen-address=${ZEROTIER_IP}
-
-# Ensure that we do not poll /etc/resolv.conf for upstream DNS servers
-no-resolv
-
-# Specify the upstream DNS server to forward requests to
-server=${UPSTREAM_DNS}
-
-# Optional: You can specify the interface if needed (e.g., interface=zt+)
-# interface=zt+
-# except-interface=lo
-
-port=53
-EOL"
-
-# --- 4. Restart and Verify ---
-echo "5. Restarting dnsmasq service to apply changes..."
-sudo systemctl restart dnsmasq
-
-echo "6. Checking dnsmasq status..."
-if sudo systemctl is-active --quiet dnsmasq; then
-    echo "SUCCESS: dnsmasq is running and listening on ${ZEROTIER_IP}."
-    echo "DNS requests will be forwarded to ${UPSTREAM_DNS}."
+# 3. Disable systemd-resolved to free up port 53
+echo -e "${BLUE}2. Disabling and stopping systemd-resolved to prevent port conflicts...${NC}"
+if systemctl is-active --quiet systemd-resolved; then
+    sudo systemctl disable --now systemd-resolved
+    sudo rm -f /etc/resolv.conf
+    echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf > /dev/null
+    echo -e "${GREEN}   -> systemd-resolved successfully stopped and disabled.${NC}"
 else
-    echo "FAILURE: dnsmasq is not running. Check logs with 'sudo journalctl -xeu dnsmasq'."
+    echo -e "${YELLOW}   -> systemd-resolved does not appear to be running or is already disabled.${NC}"
 fi
 
-echo "--- DNS Forwarder Setup Complete ---"
-echo "REMINDER: You must update your ZeroTier Controller (my.zerotier.com) DNS settings"
-echo "to point to this IP: ${ZEROTIER_IP}"
+# 4. Configure Dnsmasq
+echo -e "${BLUE}3. Configuring dnsmasq to listen on ZeroTier IP and forward to $UPSTREAM_DNS...${NC}"
+
+# Backup the original configuration file
+sudo cp /etc/dnsmasq.conf /etc/dnsmasq.conf.bak
+
+# Create new configuration file
+DNSMASQ_CONFIG="
+# Listen only on the ZeroTier IP and the local loopback address
+listen-address=127.0.0.1,$ZT_IP
+# Specify the upstream DNS server
+server=$UPSTREAM_DNS
+# Do not use /etc/resolv.conf for upstream servers
+no-resolv
+# Only listen on specified interfaces/addresses
+bind-interfaces
+# Required to stop forwarding to other upstream servers configured elsewhere
+no-hosts
+"
+
+# Write the new configuration
+echo "$DNSMASQ_CONFIG" | sudo tee /etc/dnsmasq.d/zerotier-dns.conf > /dev/null
+echo -e "${GREEN}   -> Dnsmasq configuration file written to /etc/dnsmasq.d/zerotier-dns.conf${NC}"
+
+# 5. Restart Dnsmasq to apply changes
+echo -e "${BLUE}4. Restarting dnsmasq service...${NC}"
+sudo systemctl restart dnsmasq
+sudo systemctl enable dnsmasq
+
+# Display status with colors (Note: the status output itself will be standard text)
+STATUS_OUTPUT=$(sudo systemctl status dnsmasq | grep "Active: ")
+if echo "$STATUS_OUTPUT" | grep -q "active (running)"; then
+    echo -e "${GREEN}${BOLD}Status: ${STATUS_OUTPUT}${NC}"
+else
+    echo -e "${RED}${BOLD}Status: ${STATUS_OUTPUT}${NC}"
+fi
+
+echo -e "${CYAN}${BOLD}--- Dnsmasq setup complete. ---${NC}"
+echo -e "${YELLOW}The DNS forwarder is listening on ${BOLD}$ZT_IP${NC}${YELLOW} and forwarding to ${BOLD}$UPSTREAM_DNS${NC}"
+
+# 6. ZeroTier Central Configuration Instructions
+echo -e "\n${BOLD}--- NEXT STEPS: ZeroTier Central Configuration ---${NC}"
+echo -e "${CYAN}You must now log into ZeroTier Central (my.zerotier.com) and configure your network.${NC}"
+echo -e "* Go to your network settings."
+echo -e "* Scroll to the ${BOLD}DNS${NC} section."
+echo -e "* Set ${BOLD}Primary DNS Server${NC} to: ${GREEN}$ZT_IP${NC}"
+echo -e "* ${BOLD}Save${NC} your changes."
+echo -e "\n${BOLD}--- Client Configuration ---${NC}"
+echo -e "On all client devices in the 10.11.12.0/24 subnet, ensure the ZeroTier client is set to 'Allow DNS' or run:"
+echo -e "${GREEN}sudo zerotier-cli set $ZT_NETWORK_ID allowDNS=1${NC}"
