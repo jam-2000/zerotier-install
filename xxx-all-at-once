@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# --- Configuration & Colors ---
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# Define the list of remote URLs to execute in order
+REMOTE_SCRIPTS=(
+    "https://raw.githubusercontent.com/jam-2000/1-script"
+    "https://raw.githubusercontent.com/jam-2000/2-script"
+    "https://raw.githubusercontent.com/jam-2000/3-script"
+)
+
+# --- Main Execution Loop ---
+
+echo -e "${CYAN}${BOLD}--- Starting Sequential Remote Script Execution ---${NC}"
+echo -e "${YELLOW}Total scripts to run: ${#REMOTE_SCRIPTS[@]}${NC}"
+
+# Loop through each URL in the array
+for i in "${!REMOTE_SCRIPTS[@]}"; do
+    SCRIPT_URL=${REMOTE_SCRIPTS[$i]}
+    STEP_NUM=$((i + 1))
+    TOTAL_STEPS=${#REMOTE_SCRIPTS[@]}
+
+    echo -e "\n----------------------------------------------------------------"
+    echo -e "${BOLD}[ STEP ${STEP_NUM} of ${TOTAL_STEPS} ]${NC}"
+    echo -e "${GREEN}Preparing to execute remote script from: ${BOLD}${SCRIPT_URL}${NC}"
+    echo -e "----------------------------------------------------------------"
+
+    # 1. Execute the remote script with sudo
+    # The command uses 'curl -s' to silence progress/error messages, 
+    # then pipes the content to 'sudo /bin/bash'.
+    echo -e "${CYAN}Executing script with sudo... (This will require your password once)${NC}"
+    
+    # We use a subshell to execute the curl and pipe it directly to sudo bash.
+    # The -s flag on curl is important to keep the output clean.
+    sudo sh -c "curl -S ${SCRIPT_URL} | /bin/bash"
+
+    # Check the exit status of the executed script
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ Remote script completed successfully.${NC}"
+    else
+        echo -e "${RED}❌ Remote script FAILED with an error. Review the output above.${NC}"
+        echo -e "${RED}Press ${BOLD}Ctrl+C${NC}${RED} now to stop, or press ${BOLD}Enter${NC}${RED} to try and proceed to the next step.${NC}"
+    fi
+
+    # 2. Add the pause/proceed point (Skip if it's the last script)
+    if [ "$STEP_NUM" -lt "$TOTAL_STEPS" ]; then
+        NEXT_URL=${REMOTE_SCRIPTS[$((i + 1))]}
+        echo -e "\n${YELLOW}--- PAUSE ---${NC}"
+        echo -e "${CYAN}Review the output from Step ${STEP_NUM}.${NC}"
+        echo -e "${CYAN}Press ${BOLD}Enter${NC}${CYAN} to continue to the next script (${NEXT_URL}), or press ${BOLD}Ctrl+C${NC}${CYAN} to abort the entire sequence.${NC}"
+        read -r
+    fi
+
+done
+
+echo -e "\n${GREEN}${BOLD}--- All ${TOTAL_STEPS} remote scripts have been executed. ---${NC}"
+echo -e "Sequence complete."
