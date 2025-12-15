@@ -45,12 +45,19 @@ fi
 echo -e "  -> ${YELLOW}Applying sysctl changes...${NC}"
 sudo sysctl -p
 
-# 2. Install iptables-persistent
+# 2. Install iptables-persistent (MODIFIED SECTION)
 echo -e "\n${CYAN}2. Installing iptables-persistent and netfilter-persistent...${NC}"
 if ! command -v netfilter-persistent &> /dev/null
 then
     sudo apt update
-    sudo apt install -y iptables-persistent netfilter-persistent
+    
+    # 💥 MODIFICATION ADDED HERE 💥
+    # DEBIAN_FRONTEND=noninteractive prevents the apt installation from asking questions.
+    # The -y flag answers 'Yes' to the main install, and noninteractive handles the 
+    # configuration prompt from the 'iptables-persistent' package.
+    echo -e "  -> ${YELLOW}Running installation in non-interactive mode...${NC}"
+    sudo DEBIAN_FRONTEND=noninteractive apt install -y iptables-persistent netfilter-persistent
+    
     echo -e "  -> ${GREEN}Installation complete.${NC}"
 else
     echo -e "  -> ${YELLOW}iptables-persistent is already installed. Skipping installation.${NC}"
@@ -79,6 +86,8 @@ echo -e "  -> ${GREEN}FORWARD ACCEPT rule added (Public -> ZeroTier, for establi
 
 # 4. Save IPv4 and IPv6 rules
 echo -e "\n${CYAN}4. Saving iptables rules to make them persistent across reboots...${NC}"
+# IMPORTANT: Since you are configuring the rules *before* this save, the rules added
+# in Step 3 will be saved, making them persistent!
 sudo netfilter-persistent save
 echo -e "  -> ${GREEN}Rules saved successfully.${NC}"
 
@@ -93,5 +102,4 @@ sudo iptables -t nat -L POSTROUTING -v -n
 echo -e "\n${GREEN}--- --- --- --- --- --- --- ✅ Script Complete ✅ --- --- --- --- --- --- ---${NC}"
 echo -e "Your Ubuntu machine is now configured as a router for the ZeroTier network."
 echo -e "${GREEN}--- --- --- --- --- --- --- ✅ Script Complete ✅ --- --- --- --- --- --- ---${NC}"
-echo
 echo
