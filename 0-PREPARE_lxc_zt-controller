@@ -6,3 +6,10 @@ nano /etc/pve/lxc/<<<ID>>>.conf
 lxc.cgroup.devices.allow: c 10:200 rwm
 lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file 0 0
 
+### INSTALL ###
+sudo su
+curl -S https://raw.githubusercontent.com/jam-2000/zerotier-install/refs/heads/main/1-script_install_zerotier%2Bztncui.sh | /bin/bash
+read -r
+curl -S https://raw.githubusercontent.com/jam-2000/zerotier-install/refs/heads/main/2-script_postinst_zt%2Bforward%2Bmasquerade_colored | /bin/bash
+read -r
+curl -S https://raw.githubusercontent.com/jam-2000/zerotier-install/refs/heads/main/3-dns-forwarder-for-ztnet | /bin/bash
