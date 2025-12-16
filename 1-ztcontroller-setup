@@ -1,0 +1,299 @@
+#!/bin/bash
+
+# ==========================================
+# ZeroTier Controller Setup Pro (LXC)
+# Optimized for Ubuntu 22.04
+# No jq / No Python / Pure Bash
+# ==========================================
+
+# --- Enhanced Color Palette ---
+R='\033[0;31m'    # Red
+G='\033[0;32m'    # Green
+Y='\033[1;33m'    # Yellow
+B='\033[0;34m'    # Blue
+P='\033[0;35m'    # Purple
+C='\033[0;36m'    # Cyan
+W='\033[1;37m'    # White
+NC='\033[0m'      # No Color
+
+# ==========================================
+# 0. ROOT PRIVILEGE CHECK
+# ==========================================
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${R}  CRITICAL ERROR: ACCESS DENIED${NC}"
+    echo -e "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  Please restart with: ${G}sudo $0${NC}"
+    echo -e "${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    exit 1
+fi
+
+# --- Variables ---
+AUTH_TOKEN=$(cat /var/lib/zerotier-one/authtoken.secret 2>/dev/null)
+API_URL="http://localhost:9993/controller"
+MY_NODE_ID=$(zerotier-cli info | awk '{print $3}')
+LAN_IP=$(ip -4 route get 1.1.1.1 | awk '{print $7; exit}')
+
+# --- UI Helper Functions ---
+hr() { echo -e "${C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; }
+header() {
+    clear
+    hr
+    echo -e "  ${W}ZeroTier Controller Management Tool${NC}"
+    echo -e "  ${C}Node ID:${NC} ${Y}$MY_NODE_ID${NC} | ${C}LAN IP:${NC} ${Y}$LAN_IP${NC}"
+    hr
+}
+
+get_net_name() {
+    local ID=$1
+    local DATA=$(curl -s -H "X-ZT1-Auth: $AUTH_TOKEN" "$API_URL/network/$ID")
+    echo "$DATA" | grep -o '"name":"[^"]*"' | cut -d'"' -f4
+}
+
+# ==========================================
+# 1. SUBNET UTILITIES
+# ==========================================
+get_used_subnets() {
+    local ALL_NETS=$(curl -s -H "X-ZT1-Auth: $AUTH_TOKEN" "$API_URL/network" | grep -o '[a-f0-9]\{16\}')
+    local USED=""
+    for net in $ALL_NETS; do
+        local ROUTES=$(curl -s -H "X-ZT1-Auth: $AUTH_TOKEN" "$API_URL/network/$net" | grep -o '"target":"[^"]*"' | cut -d'"' -f4)
+        USED="$USED $ROUTES"
+    done
+    echo "$USED"
+}
+
+generate_unique_subnet() {
+    local USED_LIST=$(get_used_subnets)
+    while true; do
+        local OCT2=$((RANDOM % 255))
+        local OCT3=$((RANDOM % 255))
+        local CANDIDATE="10.$OCT2.$OCT3.0/24"
+        if [[ ! "$USED_LIST" =~ "$CANDIDATE" ]]; then echo "$CANDIDATE"; break; fi
+    done
+}
+
+# ==========================================
+# 2. MENU FUNCTIONS
+# ==========================================
+
+create_new_network() {
+    header
+    echo -e "${G}🛠  Creating New ZeroTier Network${NC}"
+    echo -en "${W}Enter network name:${NC} "
+    read NET_NAME
+    [ -z "$NET_NAME" ] && NET_NAME="LXC_ZT_$(date +%d%m_%H%M)"
+
+    RAW_RESP=$(curl -s -X POST -H "X-ZT1-Auth: $AUTH_TOKEN" -d "{\"name\": \"$NET_NAME\"}" "$API_URL/network")
+    ZT_NET_ID=$(echo "$RAW_RESP" | grep -o '"id":"[^"]*"' | head -n1 | cut -d'"' -f4)
+    echo -e "${G}✅ Created ID: ${W}$ZT_NET_ID${NC}"
+    
+    hr
+    while true; do
+        SUGGESTED_SUBNET=$(generate_unique_subnet)
+        echo -e "${P}Subnet Selection${NC}"
+        echo -e "Suggested: ${G}$SUGGESTED_SUBNET${NC}"
+        echo -en "${W}Enter Subnet CIDR [Leave blank for suggestion]:${NC} "
+        read SUBNET_CIDR
+        [ -z "$SUBNET_CIDR" ] && SUBNET_CIDR="$SUGGESTED_SUBNET"
+
+        local ALL_IDS=$(curl -s -H "X-ZT1-Auth: $AUTH_TOKEN" "$API_URL/network" | grep -o '[a-f0-9]\{16\}')
+        local CONFLICTS=""
+        
+        for check_id in $ALL_IDS; do
+            [ "$check_id" == "$ZT_NET_ID" ] && continue
+            local check_data=$(curl -s -H "X-ZT1-Auth: $AUTH_TOKEN" "$API_URL/network/$check_id")
+            if echo "$check_data" | grep -q "$SUBNET_CIDR"; then
+                local check_name=$(echo "$check_data" | grep -o '"name":"[^"]*"' | cut -d'"' -f4)
+                CONFLICTS="${CONFLICTS}\n  - ${W}$check_id${NC} [${Y}$check_name${NC}]"
+            fi
+        done
+
+        if [ ! -z "$CONFLICTS" ]; then
+            echo -e "${R}⚠️  OVERLAP DETECTED!${NC} $SUBNET_CIDR is already used by:${CONFLICTS}"
+            echo ""
+            echo -e "What would you like to do?"
+            echo -e " ${G}1)${NC} Choose another subnet"
+            echo -e " ${R}2)${NC} Proceed anyway"
+            echo -en "${C}Selection [1-2]:${NC} "
+            read O_CHOICE
+            if [ "$O_CHOICE" == "2" ]; then
+                break
+            else
+                echo -e "${C}Refreshing suggestion...${NC}"
+                continue
+            fi
+        else
+            break
+        fi
+    done
+
+    eval $(echo "$SUBNET_CIDR" | awk -F'[./]' '{
+        printf "ZT_IP=\"%d.%d.%d.254\"\n", $1, $2, $3
+        printf "START=\"%d.%d.%d.1\"\n", $1, $2, $3
+        printf "END=\"%d.%d.%d.253\"\n", $1, $2, $3
+    }')
+
+    CONFIG_JSON="{\"ipAssignmentPools\": [{\"ipRangeStart\": \"$START\", \"ipRangeEnd\": \"$END\"}], \"routes\": [{\"target\": \"$SUBNET_CIDR\", \"via\": null}], \"v4AssignMode\": \"zt\"}"
+    curl -s -X POST -H "X-ZT1-Auth: $AUTH_TOKEN" -d "$CONFIG_JSON" "$API_URL/network/$ZT_NET_ID" > /dev/null
+
+    echo -e "${C}🔗 Joining host and authorizing...${NC}"
+    zerotier-cli join "$ZT_NET_ID" > /dev/null && sleep 2
+    curl -s -X POST -H "X-ZT1-Auth: $AUTH_TOKEN" -d "{\"authorized\": true, \"ipAssignments\": [\"$ZT_IP\"]}" "$API_URL/network/$ZT_NET_ID/member/$MY_NODE_ID" > /dev/null
+
+    hr
+    echo -e "${Y}Managed Routes Setup${NC}"
+    ROUTES_JSON="{\"target\": \"$SUBNET_CIDR\", \"via\": null}"
+    while true; do
+        echo -en "${W}Add managed route? (y/N):${NC} "
+        read r_act
+        [[ ! "$r_act" =~ ^[yY] ]] && break
+        echo -en "${W}Target Subnet (e.g. 192.168.1.0/24):${NC} "
+        read R_TARGET
+        echo -e "Choose Gateway IP:"
+        echo -e " ${G}1) ZeroTier IP  (${G}$ZT_IP${NC}) [Default]${NC}"
+        echo -e " ${Y}2) Physical LAN (${Y}$LAN_IP${NC})${NC}"
+        echo -e " ${W}3) Custom IP${NC}"
+        echo -en "${C}Selection [1-3]:${NC} "
+        read G_OPT
+        case $G_OPT in
+            2) G_VIA="$LAN_IP" ;;
+            3) echo -en "${W}Enter IP:${NC} "; read G_VIA ;;
+            *) G_VIA="$ZT_IP" ;;
+        esac
+        ROUTES_JSON="$ROUTES_JSON, {\"target\": \"$R_TARGET\", \"via\": \"$G_VIA\"}"
+    done
+    curl -s -X POST -H "X-ZT1-Auth: $AUTH_TOKEN" -d "{\"routes\": [$ROUTES_JSON]}" "$API_URL/network/$ZT_NET_ID" > /dev/null
+
+    hr
+    echo -en "${W}Configure Network DNS? (y/N):${NC} "
+    read d_act
+    if [[ "$d_act" =~ ^[yY] ]]; then
+        echo -e "Choose DNS Server IP:"
+        echo -e " ${G}1) ZeroTier IP  (${G}$ZT_IP${NC}) [Default]${NC}"
+        echo -e " ${Y}2) Physical LAN (${Y}$LAN_IP${NC})${NC}"
+        echo -e " ${W}3) Custom IP${NC}"
+        echo -en "${C}Selection [1-3]:${NC} "
+        read D_OPT
+        case $D_OPT in
+            2) D_IP="$LAN_IP" ;;
+            3) echo -en "${W}Enter IP:${NC} "; read D_IP ;;
+            *) D_IP="$ZT_IP" ;;
+        esac
+        curl -s -X POST -H "X-ZT1-Auth: $AUTH_TOKEN" -d "{\"dns\": {\"domain\": \"zt.local\", \"servers\": [\"$D_IP\"]}}" "$API_URL/network/$ZT_NET_ID" > /dev/null
+    fi
+    echo -e "${G}Setup Complete.${NC}"
+    read -p "Press [Enter] to continue..."
+}
+
+cleanup_networks() {
+    header
+    echo -e "${P}🔍 Scanning for 'NOT_FOUND' network attachments...${NC}"
+    BAD_NETS=$(zerotier-cli listnetworks | grep "NOT_FOUND" | awk '{print $3}')
+    if [ -z "$BAD_NETS" ]; then 
+        echo -e "${G}✅ No orphaned networks found.${NC}"
+    else
+        for net in $BAD_NETS; do 
+            echo -e "${R}Removing dead connection:${NC} $net"
+            zerotier-cli leave "$net"
+        done
+        echo -e "${G}Cleanup successful.${NC}"
+    fi
+    read -p "Press [Enter] to return..."
+}
+
+view_status() {
+    header
+    echo -e "${C}📊 Controller Network Status${NC}"
+    local IDS=$(curl -s -H "X-ZT1-Auth: $AUTH_TOKEN" "$API_URL/network" | grep -o '[a-f0-9]\{16\}')
+    if [ -z "$IDS" ]; then 
+        echo -e "${Y}No networks managed.${NC}"
+    else
+        local i=1
+        for id in $IDS; do
+            local name=$(get_net_name "$id")
+            echo -e " ${G}$i)${NC} ${W}$id${NC} [${C}$name${NC}]"
+            ((i++))
+        done
+        echo -e " ${R}0)${NC} Return to Menu"
+        echo ""
+        echo -en "${C}Select index:${NC} "
+        read N_INDEX
+        if [ -z "$N_INDEX" ]; then echo -e "${Y}No selection made.${NC}"; sleep 1; return; fi
+        [ "$N_INDEX" -eq 0 ] 2>/dev/null && return
+        local S_ID=$(echo "$IDS" | sed -n "${N_INDEX}p")
+        if [ -z "$S_ID" ]; then echo -e "${R}Invalid selection.${NC}"; else
+            hr
+            echo -e "${W}Authorized Members for $S_ID:${NC}"
+            printf "${C}%-15s %-18s %-10s${NC}\n" "NODE_ID" "IP_ASSIGNED" "STATUS"
+            local MEMBERS=$(curl -s -H "X-ZT1-Auth: $AUTH_TOKEN" "$API_URL/network/$S_ID/member")
+            echo "$MEMBERS" | grep -o '{[^{]*"authorized":true[^}]*}' | while read -r line; do
+                local M_ID=$(echo "$line" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -c 10)
+                local M_IP=$(echo "$line" | grep -o '"ipAssignments":\["[^"]*"' | cut -d'"' -f4)
+                printf "${Y}%-15s${NC} ${G}%-18s${NC} ${W}%-10s${NC}\n" "$M_ID" "$M_IP" "Active"
+            done
+        fi
+    fi
+    echo ""
+    read -p "Press [Enter] to return..."
+}
+
+delete_managed_network() {
+    while true; do
+        header
+        echo -e "${R}🗑️  Delete Managed Network${NC}"
+        local IDS=$(curl -s -H "X-ZT1-Auth: $AUTH_TOKEN" "$API_URL/network" | grep -o '[a-f0-9]\{16\}')
+        if [ -z "$IDS" ]; then
+            echo -e "${Y}No networks found to delete.${NC}"
+            read -p "Press [Enter] to return..."
+            return
+        fi
+        local i=1
+        for id in $IDS; do local name=$(get_net_name "$id"); echo -e " ${G}$i)${NC} ${W}$id${NC} [${Y}$name${NC}]"; ((i++)); done
+        echo -e " ${C}0)${NC} Return to Menu"
+        echo ""
+        echo -en "${R}Select network index to PERMANENTLY delete:${NC} "
+        read D_INDEX
+        if [ -z "$D_INDEX" ]; then echo -e "${Y}No selection made.${NC}"; sleep 1; continue; fi
+        [ "$D_INDEX" -eq 0 ] 2>/dev/null && return
+        local D_ID=$(echo "$IDS" | sed -n "${D_INDEX}p")
+        if [ -z "$D_ID" ]; then echo -e "${R}Invalid selection index.${NC}"; sleep 1; continue; fi
+        local D_NAME=$(get_net_name "$D_ID")
+        hr
+        echo -e "${R}⚠️  WARNING: You are about to delete '$D_NAME' ($D_ID).${NC}"
+        echo -en "${W}Are you absolutely sure? (type ${R}DELETE${W} to confirm):${NC} "
+        read CONFIRM
+        if [ "$CONFIRM" == "DELETE" ]; then
+            zerotier-cli leave "$D_ID" > /dev/null 2>&1
+            curl -s -X DELETE -H "X-ZT1-Auth: $AUTH_TOKEN" "$API_URL/network/$D_ID" > /dev/null
+            echo -e "${G}✅ Network $D_ID deleted successfully.${NC}"
+            read -p "Press [Enter] to continue..."
+            return
+        else
+            echo -e "${Y}Deletion cancelled.${NC}"; sleep 1
+        fi
+    done
+}
+
+# ==========================================
+# MAIN LOOP
+# ==========================================
+while true; do
+    header
+    echo -e "  ${G}1)${NC} Create New Network"
+    echo -e "  ${P}2)${NC} Cleanup Orphaned Networks"
+    echo -e "  ${C}3)${NC} View Network Status/Members"
+    echo -e "  ${R}4)${NC} Delete Managed Network"
+    echo -e "  ${W}0)${NC} Exit"
+    echo ""
+    echo -en "  ${W}Selection [1-4, 0]:${NC} "
+    read OPT
+    case $OPT in
+        1) create_new_network ;;
+        2) cleanup_networks ;;
+        3) view_status ;;
+        4) delete_managed_network ;;
+        0) echo -e "${G}Goodbye!${NC}"; exit 0 ;;
+        *) echo -e "${R}Invalid choice${NC}"; sleep 1 ;;
+    esac
+done
