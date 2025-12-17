@@ -1,4 +1,4 @@
-<div align="center">
+<div>
   
 ```text
 ███████╗███████╗██████╗  ██████╗ ████████╗██╗███████╗██████╗ 
@@ -9,7 +9,7 @@
 ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝    ╚═╝   ╚═╝╚══════╝╚═╝  ╚═╝
 ```
 ZeroTier + ZTNCUI + Controller Setup + GateWay + DNS Forward
-<\div>
+
 
 This scripts will install all the stuff needed!!!
 
