@@ -7,9 +7,9 @@
  ███╔╝  ██╔══╝  ██╔══██╗██║   ██║   ██║   ██║██╔══╝  ██╔══██╗
 ███████╗███████╗██║  ██║╚██████╔╝   ██║   ██║███████╗██║  ██║
 ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝    ╚═╝   ╚═╝╚══════╝╚═╝  ╚═╝
-```
-ZeroTier + ZTNCUI + Controller Setup + GateWay + DNS Forward
 
+ZeroTier + ZTNCUI + Controller Setup + GateWay + DNS Forward
+```
 
 
 
