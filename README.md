@@ -11,6 +11,8 @@
 ZeroTier + ZTNCUI + Controller Setup + GateWay + DNS Forward
 
 
+
+
 This scripts will install all the stuff needed!!!
 
 1. ZeroTier + ZTNCUI
